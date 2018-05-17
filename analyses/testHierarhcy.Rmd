@@ -1,0 +1,416 @@
+---
+title: "Test hierarchy"
+output: pdf_document
+---
+
+```{r echo=F, eval=F}
+setwd("~/Documents/Bristol/Codability/LoP_Codability/analyses/")
+```
+
+# Load libraries
+
+```{r warning=F, message=F}
+library(dplyr)
+library(Skillings.Mack)
+library(PMCMR)
+library(ggplot2)
+library(DyaDA)
+library(stringdist)
+```
+
+Note that the package `DyaDA` is still in development, and will need to be installed from github:
+
+```{r eval=F}
+#install.packages("devtools")
+#library(devtools)
+#install_github("DLEIVA/DyaDA")
+#library(DyaDA)
+```
+
+
+# Load data 
+
+```{r}
+d = read.csv("../data/DiversityIndices_ND.csv", stringsAsFactors = F)
+
+domain.order = c("colour","shape",'sound','touch','taste','smell')
+
+d$domain = factor(d$domain, levels=domain.order, labels=c("Color","Shape","Sound","Touch","Taste","Smell"))
+
+# Note spellingo f Yucatec / Yucatek
+d$Language = factor(d$Language, 
+                    levels =
+   rev(c("English", "Farsi", "Turkish", 
+         "Dogul Dom", "Siwu", "Cantonese", "Lao",
+         "Malay", "Semai", "Kilivila", "Mian", 
+         "Yeli Dnye", "Umpila", "Tzeltal", 
+         "Yucatec", "Zapotec", "Yurakare", 
+         "ASL", "BSL", "Kata Kolok")),
+                    labels = 
+   rev(c("English", "Farsi", "Turkish", 
+         "Dogul Dom", "Siwu", "Cantonese", "Lao",
+         "Malay", "Semai", "Kilivila", "Mian", 
+         "Yélî Dnye", "Umpila", "Tzeltal", 
+         "Yucatec", "Zapotec", "Yurakare", 
+         "ASL", "BSL", "Kata Kolok")))
+
+labels= data.frame(Language=as.character(levels(d$Language)))
+labels$x = 1:nrow(labels)
+```
+
+Summarise diversity index by domain and language:
+
+```{r}
+d2 = d %>% group_by(Language,domain) %>% 
+  summarise(m=mean(simpson.diversityIndex, na.rm=T),
+            upper=mean(simpson.diversityIndex)+sd(simpson.diversityIndex),
+            lower=mean(simpson.diversityIndex)-sd(simpson.diversityIndex))
+d2$rank = unlist(tapply(d2$m,d2$Language,rank))
+```
+
+\newpage
+
+# Analyse hierarchy
+
+There's clearly no strict hierarchy.  here is a table each domain's rank number within each language.  If there as a strict hierarchy, then each domain would have a single rank number:
+
+```{r}
+table(d2$domain,d2$rank)
+```
+
+Calculate median codability.
+
+```{r}
+meanCodability = sapply(rev(as.character(unique(d2$Language))),function(l){
+  d2x = d2[as.character(d2$Language)==l,]
+  mx = d2x$m
+  names(mx) = as.character(d2x$domain)
+  mx[as.character(unique(d2$domain))]
+})
+meanCodability = t(meanCodability)
+```
+
+\newpage
+
+## Number of unique rank orders
+
+Some languages have no data for some domains, so need to check whether each language is consistent with every other language.  The functions below calculate the number of unique compatible rank orders.
+
+```{r}
+matchCompatibleij = function(i,j,data){
+  # Take two row indices and check if the 
+  # ranks of the vectors of the rows in data
+  # are in a compatible order.
+  # Rows can include missing data.
+  ix = data[i,]
+  jx = data[j,]
+  complete = !(is.na(ix)|is.na(jx))
+  all(order(ix[complete])==order(jx[complete]))
+}
+matchCompatible <- Vectorize(matchCompatibleij, vectorize.args=list("i","j"))
+
+compatibleMatches = function(data){
+  # Compare all individuals to all others,
+  # checking if each is compatible
+  m = outer(1:nrow(data),1:nrow(data),matchCompatible,data=data)
+  rownames(m) = rownames(data)
+  colnames(m) = rownames(data)
+  return(m)
+}
+
+matches = compatibleMatches(meanCodability)
+```
+
+Languages with unique rankings:
+
+```{r}
+names(which(rowSums(matches)==1))
+```
+
+Use hierarchical clustering to identify unique rankings:
+
+```{r}
+hc = hclust(as.dist(1-matches),method = "average")
+plot(hc)
+```
+
+Number of unique rankings:
+
+```{r}
+trueUniqueRanks = length(unique(cutree(hc,h = 0)))
+```
+
+There are `r trueUniqueRanks` unique rankings.  We can calculate the probability of seeing this many rankings due to chance.  However, an exact solution is difficult because of the missing data.  Instead, we can just use permutation to sample the space of possibilities.
+
+```{r cache=T}
+permWithinRows = function(m){
+  # Permute values within rows, 
+  # keeping NAs in place
+  n = colnames(m)
+  m = t(apply(m,1,function(X){
+    if(sum(is.na(X))>0){
+      return(append(sample(X[!is.na(X)]),
+                    NA,which(is.na(X))-1)) 
+    } else{
+      return(sample(X))
+    }
+  }))
+  colnames(m) = n
+  return(m)
+}
+
+permRanks = function(){
+  matches = compatibleMatches(permWithinRows(meanCodability))
+  hc = hclust(as.dist(1-matches),method = "average")
+  length(unique(cutree(hc,h = 0)))
+}
+
+permUniqueRanks = replicate(10000,permRanks())
+```
+
+Compare true number of unique ranks to the permuted distribution:
+
+```{r}
+hist(permUniqueRanks,
+     xlim=range(c(permUniqueRanks,trueUniqueRanks)))
+abline(v=trueUniqueRanks,col=2)
+p = sum(permUniqueRanks<=trueUniqueRanks)/length(permUniqueRanks)
+z = (trueUniqueRanks-mean(permUniqueRanks))/sd(permUniqueRanks)
+```
+
+The observed number of unique compatible ranks is less than would be expected by chance (z = `r z`, p < 0.001).
+
+\newpage
+
+## Aristotelian hierarchy
+
+How compatible are the rank orderings with the Aristotelian hierarchy?  This question is complicated by the fact that some languages do not have data for some domains, so each langauge needs to be assessed only comparing to those domains where data is available.  The domains of colour and shape are also collapsed under the category of "Sight".
+
+We're using Spearman's footrule to measure distance between rankings.
+
+
+```{r}
+
+aristotelian.order = 
+c("Sight","Sight", "Sound", "Touch","Taste","Smell")
+
+# Convert domains to senses (collapse colour and shape to sight)
+meanCodability.Senses = meanCodability
+colnames(meanCodability.Senses) = c("Sight","Sight","Touch",'Taste',"Smell","Sound")
+
+
+spearmanFootrule = function(v1,v2){
+  # Version of Spearmans' footrule that can handle
+  # Multiple tied ranks
+  sum(sapply(seq_along(v1), function(i) min(abs(i - (which(v2 == v1[i]))))))
+}
+
+spearmanFootruleFromAristotelanOrder = function(X){
+  rk = names(sort(X,decreasing = T,na.last = NA))
+  # filter aristotelian.order list
+  ao = aristotelian.order[aristotelian.order %in% rk]
+  rk.rank = as.numeric(factor(rk,levels=unique(ao)))
+  ao.rank = as.numeric(factor(ao,levels=unique(ao)))
+  spearmanFootrule(rk.rank,ao.rank)
+}
+
+# Compare each language to the Aristotelian hierarchy
+trueNumEdits = apply(meanCodability.Senses,1,spearmanFootruleFromAristotelanOrder)
+t(t(trueNumEdits))
+mean(trueNumEdits)
+```
+
+Get expected Spearman's footrule for each langage when permuting codability scores within languages (maintaining missing domain data).
+
+```{r}
+set.seed(1290)
+permutedNumEdits = replicate(10000,
+    apply(permWithinRows(meanCodability.Senses),1,
+      spearmanFootruleFromAristotelanOrder))
+```
+
+Analyse the difference:
+
+```{r}
+par(mfrow=c(4,4),mar=c(1,0,2,0))
+for(i in 1:length(trueNumEdits)){
+  hist(permutedNumEdits[i,],
+     xlim=range(c(permutedNumEdits[i,],trueNumEdits[i])),
+     main=names(trueNumEdits)[i],
+     yaxt='n')
+abline(v=trueNumEdits[i],col=2)
+}
+par(mfrow=c(1,1))
+
+p = sapply(1:length(trueNumEdits), function(i){
+  sum(permutedNumEdits[i,]<=trueNumEdits[i])/ncol(permutedNumEdits)
+})
+names(p) = names(trueNumEdits)
+```
+
+Table of p-values of each language, showing the probaility of the permuted distances being smaller or equal to the true distance:
+
+```{r}
+t(t(sort(p)))
+```
+
+Note that these p-values do not ajust for multiple comparisons.
+
+\newpage
+
+## Skillings Mack test
+
+This is similar to the Friedman test, but allows missing data.
+
+```{r}
+# Add the missing data back in
+d4 = as.data.frame(d2[,c("Language",'domain','m')])
+missing_data= rbind(
+           c(Language="Yurakare",domain="Sound",m=NA),
+           c("ASL","Sound",NA),
+           c("BSL","Sound",NA),
+           c("Kata Kolok","Sound",NA),
+           c("Semai","Taste",NA),
+           c("Mian","Taste",NA))
+d4 = rbind(d4, missing_data)
+d4$m = as.numeric(d4$m)
+
+sm = capture.output(Ski.Mack(y = d4$m,
+         groups = d4$domain,
+         blocks = d4$Language,
+         simulate.p.value = T,
+         B = 10000))
+
+print(sm[1:4])
+```
+
+The p-value is small, so we can reject the null hypothesis that the distribution of mean codability of domains are is the same across langauges.  That is, there are some statistical hierarchies in the data.
+
+We can now run post-hoc tests on pairs of domains to discover the hierarchies. I'm using the Nemenyi  test, following Demšar (2006).  
+
+Demšar, J. (2006). Statistical comparisons of classifiers over multiple data sets. Journal of Machine learning research, 7(Jan), 1-30.
+
+```{r warning=F}
+ph = posthoc.friedman.nemenyi.test(
+      y = d4$m,
+      groups = d4$domain,
+      blocks = d4$Language)
+ph
+```
+
+Significant pairs:
+
+```{r}
+sig.threshold = 0.05
+
+sig = which(ph$p.value<sig.threshold,arr.ind = T, useNames = F)
+sig[,1] = rownames(ph$p.value)[sig[,1]]
+sig[,2] = colnames(ph$p.value)[as.numeric(sig[,2])]
+```
+
+```{r warning=F}
+diff = sapply(1:nrow(sig), function(i){
+  meanCodability[,sig[i,1]] - 
+    meanCodability[,sig[i,2]] 
+})
+
+cnt = sapply(1:nrow(sig), function(i){
+  max(sum(meanCodability[,sig[i,1]] > 
+        meanCodability[,sig[i,2]],na.rm=T) ,
+      sum(meanCodability[,sig[i,1]] < 
+        meanCodability[,sig[i,2]],na.rm=T))
+})
+cnt.poss = apply(meanCodability,2,function(X){sum(!is.na(X))})
+
+colnames(diff) = paste(sig[,1],"-",sig[,2])
+
+ggplot(as.data.frame.table(diff),
+       aes(x=Var2,y=Freq)) +
+  geom_hline(yintercept = 0) +
+  geom_boxplot() +
+  ylab("Difference in Simpson's diversity index") +
+  xlab("Domains") +
+  coord_flip()
+```
+
+Summarise the patterns alongside the statistics:
+
+```{r}
+mdiff = colMeans(diff,na.rm = T)
+direction = c(">","<")[1+(mdiff>0)]
+ruleLables = sapply(1:nrow(sig), function(i){
+  if(mdiff[i]>0){
+    return(paste(sig[i,2],"<",sig[i,1]))
+  } else{
+    return(paste(sig[i,1],"<",sig[i,2]))
+  }})
+ruleP = ph$p.value[ph$p.value<sig.threshold & !is.na(ph$p.value)]
+ruleP = signif(ruleP,2)
+ruleP[ruleP<0.001] = "< 0.001"
+paste(ruleLables,"(p =",ruleP,",",
+      cnt,"/",cnt.poss,"languages)")
+```
+
+\newpage
+
+# Linearity test
+
+We use [algorithms from ethology](https://www.sciencedirect.com/science/article/pii/S0003347297907089) for converting a matrix of wins and losses in dyadic interactions into a consistent linear hierarchy.  That is, we treat domains as "individuals" and see in how many languages a domain "dominantes" (more codable than) another.
+
+Build a dominance matrix:
+
+```{r}
+domain.labels = c("Color","Shape","Sound","Touch","Taste","Smell")
+
+m = apply(expand.grid(domain.labels,domain.labels),1, function(X){
+  #gt = d2[d2$domain==X[1],]$m > d2[d2$domain==X[2],]$m
+  gt = meanCodability[,X[1]]>meanCodability[,X[2]]
+  sum(gt,na.rm=T)
+})
+m = matrix(m,nrow=length(domain.labels), ncol=length(domain.labels))
+rownames(m) = domain.labels
+colnames(m) = domain.labels
+m
+```
+
+In the table above, e.g. Colour is more codable than Smell in 19 languages.
+
+Run the linearity test:
+
+```{r}
+set.seed(3298)
+linear.hierarchy.test(m)
+```
+
+The statistic is significant, suggesting that there is some consistency to the dominance ranking.  Remember, this is just based on 'wins' being bigger than 'losses', it doesn't take into account the significance of the differences.
+
+Find the most consistent order using the I&SI algorithm:
+
+```{r}
+# Needed to fix one of the methods
+source("DyaDA_ISIMethod2.R")
+isi = ISI.method2(m,names = rownames(m))
+isi
+```
+
+
+The linear order most consistent with the domain ranking within languages is (according to the I&SI algorithm):
+
+```{r}
+best.order= rownames(isi$dataFinal)
+paste(best.order,collapse =">")
+```
+
+Again, you can't interpret this as "Touch is significantly more codable than sound", it's just an order that is consistent with each domain being more codable in more languages than the last. 
+
+```{r}
+actual.orders = apply(meanCodability,1,function(X){
+  x = rev(colnames(meanCodability)[order(X)])
+  all(x == best.order[best.order %in% x])
+           })
+sum(actual.orders)
+which(actual.orders)
+```
+
+There are no languages that are compatible with this order, so it's a poor approximation.
+

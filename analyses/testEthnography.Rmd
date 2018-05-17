@@ -1,0 +1,1097 @@
+---
+title: "Explaining codability"
+output: 
+  pdf_document:
+    toc: true
+---
+
+# Introduction
+
+This set of analyses tries to explain the codability scores according to non-linguistic factors.  A list of a-priori hypotheses about external factors that could influence agreement in each domain was compiled.  The analysis of agreement across domains used a linear mixed effects model with random effects for domains nested within languages and for stimuli nested within domains.  Predictor variables were added to the model as fixed effects and remained if they significantly improved the model according to log likelihood comparison.  
+
+The factors that were predicted to explain general levels of codability within a population are:
+
+-  Number of speakers of the language (from Ethnologue or field linguist's estimate)
+-  Formal schooling (low, medium, high)
+-  Subsistance type (hunter-gatherer, horticultural, stable agriculture, industrial, post-industrial)
+-  Environment type (closed, open, both)
+-  Environment subtype (urban, jungle, fields, rocky plateau, forest, forest & sea)
+-  Settlement type (nucleated, dispersed)
+-  Society has a market (yes, no)
+-  Society supports specialists (yes, no)
+
+The Environment subtype variable was too varied to provide meaningful explanation in such a small sample, so is left out of this analysis.
+
+For domains where predictor variables were highly co-linear, a two-step approach was taken.  A random forests regression with random intercepts for languages was used to predict variation in agreement according to all a-priori predictor variables.  Variable importance measures were used to identify key variables.  The effect of these variables was tested with a full mixed effects model with random intercepts for language and stimulus.
+
+The hypotheses for each domain were as follows:
+
+### Colour 
+
+-  Presence of paints
+-  Number of paints (none, few, many)
+-  Presence of dyes
+-  Number of dyes (none, few, many)
+-  Ritual use of colour (yes, no)
+-  Professional colour (yes, no)
+-  Coloured  (yes, no)
+-  Weaving patterns (yes, no)
+
+### Shape
+
+-  formal schooling (low, medium, high)
+-  pottery (yes, no)
+-  patterned pottery (yes, no)
+-  containers (yes, no) 
+-  number of abstract shape categories (none, one, many)
+-  professional builders (yes, no)
+-  society makes boats (yes, no)
+-  boat specialists (yes, no)
+-  craft specialists (yes, no)
+-  spinning thread (yes, no)
+-  weaving (yes, no)
+-  weaving specialists (yes, no)
+-  weave patterns (yes, no)
+-  what weave patterns (none < simple < angular < complex)
+-  leatherware (yes, no)
+-  decorated.leatherware (yes, no)
+
+In addition, it is predicted that communities living in round houses will have lower codability for angular shapes than those living in angular (square or rectangular) houses.
+
+### Sound
+
+-  musical instrument (yes, no)
+-  specialist musician (yes, no)
+-  training music (yes, no)
+-  children music (yes, no)
+-  animal sounds (yes, no)
+
+### Touch
+
+-  pulverise spices (yes, no)
+-  fine surfaces on houses (yes, no)
+-  professional textures (yes, no)
+
+### Taste
+
+-  pulverise.spices (yes, no)
+-  spices herbs (yes, no)
+-  Number of additives (0-5)
+-  sweet additive (for sweet stimulus, yes, no)
+-  salt additive (for salty stimulus, yes, no)
+-  bitter additive (for bitter stimulus, yes, no)
+-  sour additive (for sour stimulus, yes, no)
+-  umami additive (for umami stimulus, yes, no)
+-  fragrant food (yes, no)
+
+In addition, having particular additives is predicted to increase the codability for the particular taste stimuli.
+
+### Smell
+
+-  pulverise spices (yes, no)
+-  spices herbs (yes, no)
+-  fragrant food (yes, no)
+-  Subsistance type (particularly hunter-gratherers)
+-  latitude (proxy for humidity)
+
+###  Colinearity
+
+These pairs of variables that are co-linear in our sample, meaning that it is redundant to add them both:
+                    
+-  "market",  "spices/herbs"
+-  "pottery coloured", "spinning specialists"
+-  "pottery coloured", "leatherware"
+-  "spinning specialists", "leatherware"
+-  "decorated leatherware", "what leatherware patterns?"
+-  "pulverise spices", "sweet additive"
+-  "pulverise spices", "sour additive"
+-  "sweet additive", "sour additive"
+
+
+```{r echo=F}
+getMEText = function(r,ef, wald=NULL, showWald=F){
+  
+  AIC = r[2,]$AIC
+  loglikDiff = signif(diff(r$logLik),2)
+  chi = round(r$Chisq[2],2)
+  df = r$`Chi Df`[2]
+  p = signif(r$`Pr(>Chisq)`[2],2)
+  
+  wald.text = ""
+  
+  if(!is.null(wald)){
+    est = signif(wald[1],2)
+    stder = signif(wald[2],2)
+    t = signif(wald[3],2)
+    wptext = ""
+    wald.text =  paste("beta = ",est,",")
+    if(showWald){
+      if(!is.na(wald[4])){
+      wptext = paste(", Wald p =",signif(wald[4],2))
+      }
+    wald.text = paste("beta = ",est,", std.err = ",stder, ", Wald t = ",t,wptext,';')
+    }
+  }
+  
+  begin = 'There was no significant'
+  if(p <0.09){
+    begin = "There was a marginal"
+  }
+  if(p < 0.05){
+    begin = 'There was a significant'  
+  }
+  
+  
+  return(paste(begin,ef,"(",wald.text,"log likelihood difference =",
+               loglikDiff,", df = ",df,", Chi Squared =", chi,", p = ",p,")."))
+}
+```
+
+
+```{r echo=F,eval=F}
+setwd("~/Documents/Bristol/Codability/LoP_Codability/analyses/")
+```
+
+\newpage
+
+# Load libraries
+
+```{r warning=F, message=F}
+library(party)
+library(rpart.plot)
+library(XLConnect)
+library(reshape2)
+library(ggplot2)
+library(usdm)
+library(REEMtree)
+library(lme4)
+library(sjPlot)
+library(gridExtra)
+```
+
+# Load data
+
+```{r}
+
+s = read.csv("../data/DiversityIndices_ND.csv")
+
+ethnography = read.csv("../data/ethnography/LoP_ethnography_processed.csv")
+
+v.with.variation = apply(ethnography,2,function(X){length(unique(X))>1})
+
+ethnography = ethnography[,v.with.variation]
+
+ethnography$paints.cat = 
+  factor(ethnography$paints.cat,
+         levels=c("none",'few','many'),
+         ordered = TRUE)
+ethnography$dyes.cat = 
+  factor(ethnography$dyes.cat,
+         levels=c("none",'few','many'),
+         ordered = TRUE)
+
+ethnography$ritual.colour.cat = 
+  factor(ethnography$dyes.cat,
+         levels=c("none",'few','many'),
+         ordered = TRUE)
+
+ethnography$environment = 
+  factor(ethnography$environment,
+         levels = c("closed",'both','open'))
+
+ethnography$subsistance = 
+  factor(ethnography$subsistance,
+         levels = c("hunter-gatherer","horticultural",
+                    'stable agriculture','industrial',
+                    "post-industrial"), ordered = T)
+
+ethnography$formal.schooling = 
+  factor(ethnography$formal.schooling,
+         levels = c("low",'medium','high'), ordered = T)
+
+ethnography$num.additives.scaled = scale(ethnography$num.additives)
+
+ethnography$what.weave.patterns2 = 
+  factor(ethnography$what.weave.patterns2,
+         levels=c("no",'simple','angular','complex'),
+         ordered = T)
+
+ethnography$shape2 = "many"
+ethnography$shape2[ethnography$shape =="no"] = "none"  
+ethnography$shape2[ethnography$shape %in% c("oblong",'cylinderical','round')] = "one"
+ethnography$shape2 = factor(ethnography$shape2,
+                            levels=c("none",'one','many'),
+                            ordered = T)
+
+# Add ethnography data to diversity scores
+s = cbind(s,
+          ethnography[
+            match(s$Language,ethnography$Language),
+            !names(ethnography) %in% 
+              c("Language","Language.orig")])
+
+s$pop.logcenter = scale(log(s$pop))
+
+# Cut population into 3 categories
+# (may not be used)
+s$pop.cat = cut(s$pop.logcenter, 
+                quantile(s$pop.logcenter, 
+                         probs=seq(0,1,length.out=4)),
+                include.lowest = T,
+                labels = c("Low","Medium","High"))
+
+# Transform the diversity index to log scale
+# (note that this does not actually change the results much)
+s$simpson.diversityIndex.log = log(0.1+s$simpson.diversityIndex)
+# scale and center
+s$simpson.diversityIndex.log = scale(s$simpson.diversityIndex.log)
+
+```
+
+
+Set random seed:
+
+```{r}
+set.seed(9999)
+```
+
+
+\newpage
+
+# General properties
+
+Use a mixed effects model to test whether the overall codability is affected by general properties of the communities.  We start with a null model and add variables if their inclusion significantly improves the fit of the model.
+
+We are quite conservative here, and add random effects for domains within languages and also for stimuli within domains.
+
+```{r}
+
+m0 = lmer(simpson.diversityIndex.log~ 
+            1 +
+            (1 | Language/domain) + 
+            (1|domain/Stimulus.code),data = s)
+mPop = update(m0, ~.+pop.logcenter)
+anova(m0,mPop)
+mEnv = update(mPop, ~.+environment)
+anova(mPop,mEnv)
+mEnvD = update(mPop, ~.+environment.details)
+anova(mPop,mEnvD)
+mSett = update(mPop, ~.+settlement)
+anova(mPop, mSett)
+mMark = update(mPop, ~.+market)
+anova(mPop,mMark)
+mSpec = update(mPop, ~.+specialists)
+anova(mPop,mSpec)
+mSubs = update(mPop, ~.+subsistance)
+anova(mPop,mSubs)
+mScho = update(mPop, ~.+formal.schooling)
+anova(mPop,mScho)
+
+```
+
+The only significant variable is population size.  We can also test whether the relationship survives allowing for random slopes by domain (random slopes by language don't make sense because population doesn't vary by language).
+
+```{r}
+m0.popSlope = lmer(simpson.diversityIndex.log~
+                     1 +
+                     (1 | Language/domain) +
+                     (1 +pop.logcenter|domain/Stimulus.code),
+                   data = s)
+mPop2 = update(m0.popSlope, ~.+pop.logcenter)
+anova(m0.popSlope,mPop2)
+
+summary(mPop2)
+```
+
+Statistical summary: `r getMEText(anova(m0.popSlope,mPop2), "main effect of population size predicting general agreement")`
+
+\newpage
+
+Plot the random effects:
+
+```{r}
+sjp.lmer(mPop2, 're', sort.est = "(Intercept)")
+```
+
+Plot the model effects for population size (extra code is to scale everything back into real numbers):
+
+```{r Plot_Codability_by_popSize}
+
+popxcod = data.frame(
+  population=tapply(s$pop.logcenter,s$Language, mean),
+  mean.codability = 
+    tapply(s$simpson.diversityIndex.log,s$Language,mean))
+
+popxcod$population = exp((popxcod$population*
+  attr(s$pop.logcenter,'scaled:scale')) +
+    attr(s$pop.logcenter,'scaled:center'))
+
+popxcod$mean.codability = exp(((popxcod$mean.codability*
+  attr(s$simpson.diversityIndex.log,'scaled:scale')) +
+    attr(s$simpson.diversityIndex.log,'scaled:center')))-0.1
+
+plotsX = sjp.lmer(mPop2, "eff", show.ci = T,
+         show.scatter = T,prnt.plot=F,facet.grid=F)
+
+plotsX$plot.list[[1]]$labels$title = ""
+
+plotsX$plot.list[[1]]$data$x =
+  exp((plotsX$plot.list[[1]]$data$x*
+  attr(s$pop.logcenter,'scaled:scale')) +
+    attr(s$pop.logcenter,'scaled:center'))
+
+plotsX$plot.list[[1]]$data$y =
+  exp(((plotsX$plot.list[[1]]$data$y*
+  attr(s$simpson.diversityIndex.log,'scaled:scale')) +
+    attr(s$simpson.diversityIndex.log,'scaled:center')))-0.1
+
+plotsX$plot.list[[1]]$data$lower =
+  exp(((plotsX$plot.list[[1]]$data$lower*
+  attr(s$simpson.diversityIndex.log,'scaled:scale')) +
+    attr(s$simpson.diversityIndex.log,'scaled:center')))-0.1
+
+plotsX$plot.list[[1]]$data$upper =
+  exp(((plotsX$plot.list[[1]]$data$upper*
+  attr(s$simpson.diversityIndex.log,'scaled:scale')) +
+    attr(s$simpson.diversityIndex.log,'scaled:center')))-0.1
+
+gx.pop = plotsX$plot.list[[1]] + 
+  scale_x_log10() + 
+  xlab("Population size") +
+  ylab("Codability") + 
+  ggtitle("Overall codability") +
+  geom_point(data=popxcod, aes(population,mean.codability))
+
+gx.pop
+
+
+
+```
+
+```{r echo=F,eval=F}
+# Predict codability for population of 100 and 1 million
+epop = c(100,1000,10000,100000,1000000,10000000)
+names(epop) = epop
+epop = scale(log(epop), 
+             center = attr(s$pop.logcenter,'scaled:center'), 
+             scale = attr(s$pop.logcenter,'scaled:scale'))
+ecod = predict(mPop2,data.frame(pop.logcenter=epop),re.form=NA)
+ecod = exp(((ecod*
+  attr(s$simpson.diversityIndex.log,'scaled:scale')) +
+    attr(s$simpson.diversityIndex.log,'scaled:center')))-0.1
+ecod
+```
+
+Plots for subsistance, formal schooling.
+
+```{r}
+ggplot(s,
+       aes(subsistance,simpson.diversityIndex)) +
+  geom_boxplot() + 
+  xlab("Subsistance type") +
+  ylab("Codability")
+
+gg.formalschooling = 
+  ggplot(s,
+       aes(formal.schooling,simpson.diversityIndex)) +
+  geom_boxplot() + 
+  xlab("Formal schooling") +
+  ylab("Codability") 
+gg.formalschooling 
+```
+
+Correlation between population size and subsistance:
+
+```{r}
+kruskal.test(ethnography$pop, ethnography$subsistance)
+```
+
+
+\newpage
+
+# Specific domains
+
+There are many more variables to consider for the individual domains.  Many are highly correlated, and there are many missing combinations in the data.  This makes a regression approach difficult.  Instead, we can use a binary decision tree to find clusters in the data based on salient properties.  The package `REEMtree` also allows an additional random effect for Language (crossed random effects for stimulus type are not permitted).  So we use random forests to identify key variables (or exclude unimportant variables), then mixed effects modelling to determine significance of main effects.
+
+Note that we're using a categorical version of the population variable that splits the data into "small","medium",'large'.  This is because the raw population variable is a continuous variable that can be used by a decision tree to split the languages into many arbitrary categories, giving it an unfair advantage over the other variables and making it difficult to interpret the plot.
+
+# Colour
+
+Calculate the optimal decision tree, given variables related to colour:
+
+```{r}
+s.colour = s[s$domain=='colour',]
+rt = REEMtree(simpson.diversityIndex~
+          formal.schooling +
+          paints.cat+
+          dyes.cat+
+          ritual.colour.cat+
+          professional.colour+
+          pottery.coloured+
+          weave.patterns,
+         random = ~1|Language,
+         data = s.colour,
+         MaxIterations=100000)
+
+```
+
+## Colour Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt,s.colour,id=s.colour$Language,
+  EstimateRandomEffects = T),
+    s.colour$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+
+rpart.plot(tree(rt), type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Colour")
+
+varimp = rt$Tree$variable.importance
+
+par(mar=c(5,10,2,2))
+barplot(sort(varimp), horiz=T, las=2,
+        xlab="Variable Importance")
+par(mar=c(5, 4, 4, 2) + 0.1)
+```
+
+Plot the relationships:
+
+```{r}
+ggplot(s.colour,
+       aes(pottery.coloured,simpson.diversityIndex)) +
+  geom_boxplot() + 
+  xlab("Coloured pottery") +
+  ylab("Codability")
+
+ggplot(s.colour,
+       aes(paints.cat,simpson.diversityIndex)) +
+  geom_boxplot() + 
+  xlab("Number of paints")
+
+ggplot(s.colour,
+       aes(formal.schooling,simpson.diversityIndex)) +
+  geom_boxplot() +
+  xlab("Formal Schooling")
+```
+
+Test the most important variables with a mixed effects model:
+
+```{r}
+mc.all = lmer(simpson.diversityIndex.log ~ 
+        1 +
+          paints.cat +
+          pottery.coloured +
+          formal.schooling +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.colour)
+
+mc.noPaints = lmer(simpson.diversityIndex.log ~ 
+        1 + 
+          pottery.coloured +
+          formal.schooling +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.colour)
+
+mc.noSchool = lmer(simpson.diversityIndex.log ~ 
+        1 + 
+          pottery.coloured +
+          paints.cat +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.colour)
+
+mc.noPott = lmer(simpson.diversityIndex.log ~ 
+        1 + 
+          paints.cat +
+          formal.schooling +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.colour)
+
+anova(mc.all, mc.noPaints)
+anova(mc.all, mc.noSchool)
+anova(mc.all, mc.noPott)
+```
+
+There is only a contribution of number of paints beyond population size, but this goes in the opposite direction of the predicted one: societies with few paints have fewer categories than societies with none or many.  `r getMEText(anova(mc.all, mc.noPaints), "main effect of number of paints")`
+
+```{r echo=F, eval=F}
+# Relationship with latitude:
+m0.col = lmer(simpson.diversityIndex.log ~ 
+        1 + 
+        (1 | Language) +
+        (1 + I(abs(latitude)) | Stimulus.code),
+     data = s.colour)
+
+m1.col = update(m0.col, ~. +I(abs(latitude))) 
+m2.col = update(m1.col, ~. +I(abs(latitude)^2))
+
+anova(m0.col, m1.col,m2.col)
+
+ggplot(s.colour, aes(abs(latitude), simpson.diversityIndex)) +
+  geom_point() + geom_smooth()
+# There is no relationship with lattitude.
+```
+
+
+\newpage
+
+# Shape
+
+Calculate the optimal decision tree, given variables related to shape:
+
+```{r}
+s.shape = s[s$domain=='shape',]
+
+rt.shape = REEMtree(simpson.diversityIndex~
+          formal.schooling +
+          pottery +
+          pottery.patterned +
+          containers +
+          shape2 +
+          professional.builders +
+          make.boats+
+          boat.specialists+
+          craft.specialists+
+          spinning.thread+
+          weaving+
+          weaving.specialists+
+          weave.patterns+
+          what.weave.patterns2+
+          leatherware+
+          decorated.leatherware,
+         random = ~1|Language,
+         data = s.shape,
+         MaxIterations=100000)
+```
+
+## Shape Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt.shape,s.shape,id=s.shape$Language, EstimateRandomEffects = T),
+    s.shape$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+
+rpart.plot(tree(rt.shape), type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Shape")
+
+varimp = rt.shape$Tree$variable.importance
+
+par(mar=c(5,10,2,2))
+barplot(sort(varimp), horiz=T, las=2,
+        xlab="Variable Importance")
+par(mar=c(5, 4, 4, 2) + 0.1)
+```
+
+Both `pottery.patterned` and `formal.schooling` have high importance.  The two variables are highly co-linear (there are no societies with 'high' formal schooling without patterned pottery):
+
+```{r}
+table(s$formal.schooling, s$pottery.patterned)
+```
+
+So we can look at both:
+
+```{r}
+gx.shape = ggplot(s.shape, aes(pottery.patterned, simpson.diversityIndex))+
+  geom_boxplot() + 
+  xlab("Patterned pottery") +
+  ylab("Codability")+ 
+  ggtitle("Codability of Shape")
+
+gx.shape
+
+gx.shape2 = ggplot(s.shape, aes(formal.schooling, simpson.diversityIndex))+
+  geom_boxplot() + 
+  xlab("Formal Schooling") +
+  ylab("Codability") + 
+  ggtitle("Codability of Shape")
+
+gx.shape2
+```
+
+And use a mixed effects model to test the contribuion of each:
+
+```{r}
+m.both = lmer(simpson.diversityIndex.log ~
+       pottery.patterned +
+       formal.schooling +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.shape)
+
+m.noSchool = lmer(simpson.diversityIndex.log ~
+       pottery.patterned +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.shape)
+
+m.noPPottery = lmer(simpson.diversityIndex.log ~
+       formal.schooling +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.shape)
+
+anova(m.both,m.noSchool)
+anova(m.both,m.noPPottery)
+
+summary(m.both)
+# R squared:
+cor(s.shape$simpson.diversityIndex.log,predict(m.both))^2
+# M
+tapply(s.shape$simpson.diversityIndex,s.shape$formal.schooling,mean)
+```
+
+
+`r getMEText(anova(m.both,m.noSchool), "main effect of schooling")`
+
+`r getMEText(anova(m.both,m.noPPottery), "main effect of patterned pottery")`
+
+
+## Specific hypotheses about shape
+
+Natural objects have (mostly) organic rounded shapes. Living in square/rectangular houses should give more names for angular shaped objects. We test whether living in rounded houses predicts codability for angular shapes.  Note that there is only one community which lives in round houses (Umpila).  Umpila are Hunter-gatherers, who are not necessarily low-codability across the board (they have very high codability for smell).
+
+```{r}
+s.shape$angularShapes = s.shape$Stimulus.code %in%
+              c("shape.2 cubes",
+                "shape.3 squares",
+                'shape.cube',
+                'shape.square',
+                'shape.rectangle',
+                'shape.rectangle 3D')
+# Null model
+m0 = lmer(simpson.diversityIndex.log ~
+            1 +
+            (1 | Language) +
+            (1 +I(houses=="round")| Stimulus.code),
+          data = s.shape[s.shape$angularShapes,])
+# Add fixed effect
+m1 = lmer(simpson.diversityIndex.log ~
+            1 + 
+            I(houses=="round") +
+            (1 | Language) +
+            (1 +I(houses=="round")| Stimulus.code),
+          data = s.shape[s.shape$angularShapes,])
+anova(m0,m1)
+summary(m1)
+```
+
+Very weak significant effect for communities with rounded houses to have less agreement on angular shapes than those living in angular houses.  Mean codability for angular houses = `r mean(s.shape[s.shape$angularShapes & s.shape$houses!="round",]$simpson.diversityIndex)`; mean codability for round houses = `r mean(s.shape[s.shape$angularShapes & s.shape$houses=="round",]$simpson.diversityIndex)`
+
+```{r}
+gx.shape.house = ggplot(s.shape[s.shape$angularShapes,],
+       aes(houses!="round",simpson.diversityIndex)) +
+  xlab("House shape") +
+  scale_x_discrete(labels=c("Round","Angular")) +
+  ylab("Codability") +
+  geom_boxplot()
+```
+
+
+
+\newpage
+
+# Sound
+
+Calculate the optimal decision tree, given variables related to shape:
+
+```{r}
+s.sound = s[s$domain=='sound',]
+
+rt.sound = REEMtree(simpson.diversityIndex~
+          musical.instrument +
+          specialist.musician+
+          training.music+
+          children.music+
+          animal.sounds,
+         random = ~1|Language,
+         data = s.sound,
+         MaxIterations=100000,
+         tree.control = rpart.control(maxdepth = 1))
+```
+
+## Sound Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt.sound,s.sound,id=s.sound$Language, EstimateRandomEffects = T),
+    s.sound$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+
+rpart.plot(tree(rt.sound), type=4,extra=100,
+           branch.lty=1, box.palette="RdYlGn", main="Sound")
+```
+
+```{r echo=F, eval=F}
+#This is quite complicated, so prune least important parts:
+
+sound.tree = prune(tree(rt.sound),cp=0.05)
+
+rpart.plot(sound.tree, type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Sound")
+
+
+varimp = rt.sound$Tree$variable.importance
+
+par(mar=c(5,10,2,2))
+barplot(sort(varimp), horiz=T, las=2,
+        xlab="Variable Importance")
+par(mar=c(5, 4, 4, 2) + 0.1)
+```
+
+This suggests that the training of musicians and having specialist musicians is important.  Training of musicians depends on having specialist musicians, so we concentrate on the latter.
+
+```{r}
+gx.sound = ggplot(s.sound, aes(specialist.musician, simpson.diversityIndex))+
+  geom_boxplot() + 
+  xlab("Specialist musicians") +
+  ylab("Codability") +
+  ggtitle("Codability of sounds")
+gx.sound
+```
+
+Test with mixed effects modelling:
+
+```{r}
+mSd.null = lmer(simpson.diversityIndex.log ~
+       1 +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.sound)
+
+mSd.music = lmer(simpson.diversityIndex.log ~
+       1 + 
+         specialist.musician +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.sound)
+
+anova(mSd.null, mSd.music)
+
+#M
+tapply(s.sound$simpson.diversityIndex,s.sound$specialist.musician,mean)
+```
+
+
+
+
+\newpage
+
+# Touch
+
+Calculate the optimal decision tree, given variables related to shape:
+
+```{r}
+s.touch = s[s$domain=='touch',]
+
+rt.touch = REEMtree(simpson.diversityIndex~
+          pulverise.spices +
+          fine.surfaces.on.houses +
+          professional.textures,
+         random = ~1|Language,
+         data = s.touch,
+         MaxIterations=100000)
+```
+
+## Touch Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt.touch,s.touch,id=s.touch$Language, EstimateRandomEffects = T),
+    s.touch$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+
+rpart.plot(tree(rt.touch), type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Touch")
+
+#varimp = rt.touch$Tree$variable.importance
+
+#par(mar=c(5,10,2,2))
+#barplot(sort(varimp), horiz=T, las=2,
+#        xlab="Variable Importance")
+#par(mar=c(5, 4, 4, 2) + 0.1)
+```
+
+There are no significant partitions for touch.
+
+
+\newpage
+
+# Taste
+
+Calculate the optimal decision tree, given variables related to taste:
+
+(some variables are co-linear, so we take out sweet.addivit ve and sour.additive)
+
+```{r}
+s.taste = s[s$domain=='taste',]
+
+rt.taste = REEMtree(simpson.diversityIndex~
+         pulverise.spices+
+         spices.herbs+
+         num.additives.scaled +
+         fragrant.food,
+         random = ~1|Language,
+         data = s.taste,
+         MaxIterations=100000)
+```
+
+## Taste Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt.taste,s.taste,id=s.taste$Language, EstimateRandomEffects = T),
+    s.taste$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+if(nrow(tree(rt.taste)$splits)>0){
+  rpart.plot(tree(rt.taste), type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Taste")
+}
+
+if(nrow(tree(rt.taste)$splits)>0){
+  varimp = rt.taste$Tree$variable.importance
+  
+  par(mar=c(5,10,2,2))
+  barplot(sort(varimp), horiz=T, las=2,
+          xlab="Variable Importance")
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+
+```
+
+No strong effect of number of additives in a full model:
+
+```{r}
+mT.null = lmer(simpson.diversityIndex.log ~
+       1 + 
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.taste)
+mT.nA = lmer(simpson.diversityIndex.log ~
+       1 + num.additives.scaled +
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.taste)
+anova(mT.null, mT.nA)
+```
+
+
+## Specific taste hypotheses
+
+Does the codability of a specific taste correlate with having an additive for that taste?
+
+```{r}
+tx = s.taste[s.taste$Stimulus.code=="taste.citric acide monohydrate (sour)",]
+t.test(tx$simpson.diversityIndex ~ tx$sour.additive)
+
+tx = s.taste[s.taste$Stimulus.code=="taste.glutamate (umami)",]
+t.test(tx$simpson.diversityIndex ~ tx$umami.additive)
+
+tx = s.taste[s.taste$Stimulus.code=="taste.quinine hydrochloride (bitter)",]
+t.test(tx$simpson.diversityIndex ~ tx$bitter.additive)
+
+tx = s.taste[s.taste$Stimulus.code=="taste.sodium chloride (salt)",]
+t.test(tx$simpson.diversityIndex ~ tx$salt.additive)
+
+tx = s.taste[s.taste$Stimulus.code=="taste.sucrose (sweet)",]
+t.test(tx$simpson.diversityIndex ~ tx$sweet.additive)
+```
+
+There are no specific taste effects.
+
+\newpage
+
+# Smell
+
+```{r}
+s.smell = s[s$domain=='smell',]
+
+rt.smell = REEMtree(simpson.diversityIndex~
+          pulverise.spices+
+          spices.herbs+
+          fragrant.food + 
+          subsistance,
+         random = ~1|Language,
+         data = s.smell,
+         MaxIterations=100000)
+```
+
+## Smell Results
+
+Proportion of variance explained:
+
+```{r}
+# R squared
+cor(predict.REEMtree(rt.smell,s.smell,id=s.smell$Language, EstimateRandomEffects = T),
+    s.smell$simpson.diversityIndex)^2
+
+```
+
+Plot the tree and calculate variable importance:
+
+```{r}
+if(nrow(tree(rt.smell)$cptable)>1){
+  rpart.plot(tree(rt.smell), type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Smell")
+  
+  varimp = rt.smell$Tree$variable.importance
+  
+  par(mar=c(5,10,2,2))
+  barplot(sort(varimp), horiz=T, las=2,
+          xlab="Variable Importance")
+  par(mar=c(5, 4, 4, 2) + 0.1)
+}
+```
+
+Subsistance predicts codability.  Particularly the hunter-gatherer langauge.
+
+```{r}
+s.smell$subsistance = factor(s.smell$subsistance, levels=rev(levels(s.smell$subsistance)))
+m0.smell = lmer(simpson.diversityIndex.log ~ 
+        1 +
+        (1 | Language) +
+        (1 + subsistance | Stimulus.code),
+     data = s.smell)
+
+m1.smell = update(m0.smell, ~. + subsistance) 
+anova(m0.smell,m1.smell)
+
+summary(m1.smell)
+```
+
+```{r warning=F}
+sjp.lmer(m1.smell, 'pred', "subsistance", show.ci = T)
+```
+
+```{r}
+gx = sjp.lmer(m1.smell, 'eff', show.ci = T, prnt.plot = F)
+subsd = gx$plot$data
+subsd$`Subsistance Type` = factor(subsd$label, 
+          levels = c("hunter-gatherer","horticultural",
+                    'stable agriculture','industrial',
+                    "post-industrial"), ordered = T)
+
+convertSimps = function(X){
+  exp(X * attr(s$simpson.diversityIndex.log,'scaled:scale') + 
+    attr(s$simpson.diversityIndex.log,'scaled:center'))-0.1
+}
+
+subsd$y = convertSimps(subsd$y)
+subsd$lower = convertSimps(subsd$lower)
+subsd$upper = convertSimps(subsd$upper)
+
+ggplot(subsd, 
+       aes(`Subsistance Type`, y)) +
+  geom_point(size=2) +
+  geom_errorbar(aes(ymin = lower, ymax = upper)) +
+  ylab("Marginal effect on Simpson's diversity index")
+
+# Raw data
+gx.smell = ggplot(s[s$domain=="smell",], 
+       aes(subsistance=="hunter-gatherer", simpson.diversityIndex)) +
+  geom_boxplot() +
+  xlab("Subsistance Type") +
+  ylab("Codability") +
+  scale_x_discrete(labels=c("Other","Hunter-gatherer")) +
+  coord_cartesian(ylim=c(0,1))
+
+```
+
+
+```{r}
+# M
+tapply(s.smell$simpson.diversityIndex,s.smell$subsistance,mean)
+tapply(s.smell$simpson.diversityIndex,s.smell$subsistance=='hunter-gatherer',mean)
+```
+
+
+Relationship with latitude:
+
+```{r}
+
+m0.smell = lmer(simpson.diversityIndex.log ~ 
+        1  +
+        (1 | Language) +
+        (1 + I(abs(latitude)) | Stimulus.code),
+     data = s.smell)
+
+m1.smell = update(m0.smell, ~. +I(abs(latitude))) 
+m2.smell = update(m1.smell, ~. +I(abs(latitude)^2))
+
+anova(m0.smell, m1.smell,m2.smell)
+
+ggplot(s.smell, aes(abs(latitude), simpson.diversityIndex)) +
+  geom_point() + geom_smooth()
+```
+
+No significant relationship with latitude.
+
+\newpage
+
+# Extra Graphs
+
+```{r}
+pdf("../results/graphs/Diversity_by_population.pdf", width=6, height=6)
+gx.pop
+dev.off()
+
+load("../results/graphs/Codability_by_AbstractUse_ggplot.RDat")
+gx.abstractTerms = px
+gx.abstractTerms =  gx.abstractTerms+ theme(strip.text = element_blank())
+gx.abstractTerms$theme$plot.title = gx.pop$theme$plot.title
+
+
+gx2b = grid.arrange(
+        gx.abstractTerms + ggtitle("A: Overall codability"),
+        gx.pop + ggtitle("B: Overall codability"),
+        gg.formalschooling + ggtitle("C: Overall codability"),
+        gx.sound + ggtitle("D: Sounds"), 
+        gx.shape2 + ggtitle("E: Shapes"),
+        gx.shape + ggtitle("F: Shapes"), 
+        gx.shape.house + ggtitle("G: Angular Shapes"),
+        gx.smell +ggtitle("H: Smells"),
+        layout_matrix = rbind(c(1,2,3,4),c(5,6,7,8)))
+
+pdf("../results/graphs/Diversity_plots.pdf", width=10, height=6)
+plot(gx2b)
+dev.off()
+
+setEPS()
+postscript("../results/graphs/Diversity_plots.eps", width=10, height=6)
+gx2b
+dev.off()
+```
+

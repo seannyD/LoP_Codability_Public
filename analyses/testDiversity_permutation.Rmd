@@ -1,0 +1,66 @@
+---
+title: "testDiversity"
+output: pdf_document
+---
+
+# Load libraries
+```{r}
+library(lme4)
+library(sjPlot)
+library(REEMtree)
+library(ggplot2)
+```
+
+```{r echo=F, eval=F}
+setwd("~/Documents/Bristol/Codability/LoP_Codability/analyses/")
+```
+
+# Load data
+
+```{r}
+d = read.csv("../data/DiversityIndices_ND.csv", stringsAsFactors = F)
+
+d = d[!is.na(d$simpson.diversityIndex),]
+
+d$Language= as.factor(d$Language)
+d$domain = factor(d$domain, levels=c("colour",'shape','sound','touch','taste','smell'))
+
+
+```
+
+
+```{r}
+
+d$diversity = d$simpson.diversityIndex
+domainMeans = tapply(d$diversity, d$domain, mean)
+
+shuffleDomains = function(dx,d1,d2){
+  tapply(d$diversity, sample(d$domain), mean)
+}
+
+permuteX = function(d,p){
+  pDiff = tapply(d[d$domain %in% p,]$diversity,
+                    sample(d[d$domain %in% p,]$domain),
+                    mean)
+  pDiff = abs(diff(pDiff[!is.na(pDiff)]))
+  return(pDiff)
+}
+
+pairs = combn(unique(as.character(d$domain)),2)
+
+permTests = apply(pairs,2, function(p){
+  trueDiff = tapply(d[d$domain %in% p,]$diversity,
+                    d[d$domain %in% p,]$domain,
+                    mean)
+  trueDiff = abs(diff(trueDiff[!is.na(trueDiff)]))
+  permDiff = replicate(10,permuteX(d,p))
+  (trueDiff -mean(permDiff))/sd(permDiff)
+})
+
+res = data.frame(
+  pair = apply(pairs,2,paste,collapse=','),
+  perm.z = permTests)
+
+
+```
+

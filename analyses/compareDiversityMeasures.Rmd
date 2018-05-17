@@ -1,0 +1,170 @@
+---
+title: "Comparing diversity measures"
+output: pdf_document
+---
+
+
+```{r echo=F, eval=F}
+setwd("~/Documents/Bristol/Codability/LoP_Codability/analyses/")
+```
+
+# Introduction
+
+We are reccomending using Simpson's index where "no descriptions" are counted as unique responses.  Simpson's index has the advantage of having a transparent definition: the probability that two observations taken at random from the sample are of the same type. Converting "no descriptions" to unique responses also means that Simpson's index and the Shannon index correlate very highly. It also has the advantage of producing numbers for stimuli where no participant provided a response.
+
+
+# Functions
+
+```{r}
+di.shannon = function(labels){
+  # counts for each label
+  tx = table(labels)
+  # convert to proportions
+  tx = tx/sum(tx)
+  -sum(tx * log(tx))
+}
+di.simpson = function(labels){
+  # Full formula due to small datasets
+  # (Hunter-Gaston index)
+  n = table(labels)
+  N = length(labels)
+  sum(n * (n-1))/(N*(N-1))
+}
+
+di.BnL = function(labels){
+  #CR-DR+20
+  #where, DR is the number of different responses a stimulus item receives 
+  #and CR is the number of subjects who agree on the most common name
+  DR = length(unique(labels))
+  CR = max(table(labels))
+  return(CR-DR+20)
+}
+
+```
+
+# Load data
+
+```{r}
+a = read.csv("../data/AllData_LoP.csv",stringsAsFactors = F)
+
+d = read.csv("../data/DiversityIndices.csv", stringsAsFactors = F)
+
+d = d[!is.na(d$simpson.diversityIndex),]
+d$id = paste(d$Language,d$Stimulus.code)
+
+d.nd = read.csv("../data/DiversityIndices_ND.csv", stringsAsFactors = F)
+
+d.nd = d.nd[!is.na(d.nd$simpson.diversityIndex),]
+d.nd$id = paste(d.nd$Language,d.nd$Stimulus.code)
+
+l = read.delim("allCombs.txt", sep='', stringsAsFactors = F, header=F)
+names(l) = c("N","shannon","simpson")
+```
+
+\newpage
+
+# Compare measures
+
+Plotting the Shannon index against Simpson's index, we see that there is a general correlation, but also several outliers.
+
+```{r}
+plot(d$shannon.diversityIndex,d$simpson.diversityIndex)
+cor.test(d$shannon.diversityIndex,d$simpson.diversityIndex)
+```
+
+Taking into account the non-linear relationship, the variance explained in common is:
+
+```{r}
+orig.cor = summary(lm(simpson.diversityIndex~ 
+           shannon.diversityIndex + 
+           I(shannon.diversityIndex^2),
+        data = d))
+orig.cor$r.squared
+```
+
+
+These outliers come close to covering the total space of possible relations between the two measures.  The data from the plot below comes from `compareDiversityMeasures.py`, which generates all possible combinations of responses within the bounds of the experiment (between 2 and 14 categories, between 1 and 17 responses):
+
+```{r}
+plot(l$shannon,l$simpson)
+```
+
+The outliers in the bottom left of the plot (where the two measures disagree) come from cases where there are many "no description" responses.  e.g. colour 10G 8/6 for Umpila:
+
+```{r}
+ax = a[a$Language=="Umpila" &          a$Stimulus.code=="colour.10G 8/6" &
+         a$Response==1,]
+table(ax$head)
+tx = ax[ax$head!="no description",]$head
+```
+
+
+The original measures remove "no description" responses.  That means that the example above above yeilds a Simpson index of `r di.simpson(tx)` - there is no agreement between the two speakers who responded.  The Shannon index is `r di.shannon(tx)`, since there are only two responses, and the Shannon index measures the information in that sequence.  Had there been 14 completely different responses, then the Shannon index would be `r round(di.shannon(1:14),2)`, which is closer to the simple relationship.
+
+One solution is to count "no description" responses as unique labels.  So in the example above, the table of responses would be:
+
+```{r}
+tx.nd = ax$head
+tx.nd[tx.nd=='no description'] =
+  paste0("R",1:sum(tx.nd=="no description"))
+tx.nd
+```
+
+This does not affect the Simpson index, but raises the Shannon index to `r round(di.shannon(tx.nd),2)`.  It also has the advantage of producing a defined index for cases where no participants produced a label.
+
+If we calculate all indices while counting "no description" responses as unique responses, then we get the following relationship:
+
+```{r}
+plot(d.nd$shannon.diversityIndex,
+     d.nd$simpson.diversityIndex)
+cor.test(d.nd$shannon.diversityIndex,
+     d.nd$simpson.diversityIndex)
+# Proportion of values unchanged
+pvu = sum(d$simpson.diversityIndex ==
+     d.nd$simpson.diversityIndex[match(d$id, d.nd$id)]) / nrow(d)
+```
+
+`r round(pvu*100,2)`% of values are unchanged.  The new values are also more highly correlated:
+
+
+```{r}
+nd.cor = summary(lm(simpson.diversityIndex~ 
+           shannon.diversityIndex + 
+           I(shannon.diversityIndex^2),
+        data = d.nd))
+nd.cor$r.squared
+```
+
+# Diversity and number of types
+
+```{r}
+
+plot(d.nd$simpson.diversityIndex, d.nd$N)
+plot(d.nd$shannon.diversityIndex, d.nd$N)
+
+```
+
+\newpage
+
+# Brown and Lenneberg measure
+
+The measure from Brown and Lenneberg (1954) of "interpersonal agreement" is caluclated as
+
+>  CR-DR+20
+
+Where, CR is the number of subjects who agree on the most common name and DR is the number of different responses a stimulus item receives (the +20 is so that the values remain positive).  This does not adjust for the number of participants/responses.  Still, the values are very highly correlated with both Simpson and Shannon indices, albeit non-linearly.  
+
+```{r}
+plot(d.nd$shannon.diversityIndex,
+     d.nd$BnL.diversityIndex)
+cor.test(d.nd$shannon.diversityIndex,
+     d.nd$BnL.diversityIndex)
+
+plot(d.nd$simpson.diversityIndex,
+     d.nd$BnL.diversityIndex)
+cor.test(d.nd$simpson.diversityIndex,
+     d.nd$BnL.diversityIndex)
+```
+
+
+In particular, the correlation with the Shannon index makes sense, because it is related to the 'surprisal' of encountering a label that is not your own. However, this measure is not theoretically motivated, so the other two are preferred.

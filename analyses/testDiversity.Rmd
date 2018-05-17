@@ -1,0 +1,706 @@
+---
+title: "Codability across languages and domains"
+output: 
+  pdf_document:
+    toc: true
+---
+
+# Introduction
+
+This document provides R code for reproducing the test of the relative codability of the senses.  We use mixed effects modelling to test the influence of language and domain.  The full model included random intercepts for stimulus, domain, language, and the interaction between language and domain.  Log-likelihood comparison was used to compare the full model to a model without one of those intercepts 
+
+## Data
+
+The main data comes from `../data/DiversityIndices_ND.csv`, which includes the Simpson's diversity index, counting no-responses as unique responses.  Each row lists the codability of a particular stimulus for a particular community.  The variables are:
+
+-  `Language`: Language/Community name
+-  `domain`: Sense domain
+-  `Stimulus.code`: Identity of the stimulus
+-  `simpson.diversityIndex`: Simpson's diversity index
+-  `shannon.diversityIndex`: Shannon diversity index
+-  `N`: Number of responses
+-  `BnL.diversityIndex`:  Brown & Lenneberg diversity index
+-  `mean.number.of.words`:  Mean number of words in full response
+
+
+# Load libraries
+```{r message=F, warning=F}
+library(lme4)
+library(sjPlot)
+library(REEMtree)
+library(ggplot2)
+library(party)
+library(reshape2)
+library(rpart.plot)
+library(lattice)
+library(dplyr)
+library(mgcv)
+library(lmtest)
+library(itsadug)
+```
+
+
+```{r echo=F}
+getMEText = function(r,ef, wald=NULL, showWald=F){
+  
+  AIC = r[2,]$AIC
+  loglikDiff = signif(diff(r$logLik),2)
+  chi = round(r$Chisq[2],2)
+  df = r$`Chi Df`[2]
+  p = signif(r$`Pr(>Chisq)`[2],2)
+  
+  wald.text = ""
+  
+  if(!is.null(wald)){
+    est = signif(wald[1],2)
+    stder = signif(wald[2],2)
+    t = signif(wald[3],2)
+    wptext = ""
+    wald.text =  paste("beta = ",est,",")
+    if(showWald){
+      if(!is.na(wald[4])){
+      wptext = paste(", Wald p =",signif(wald[4],2))
+      }
+    wald.text = paste("beta = ",est,", std.err = ",stder, ", Wald t = ",t,wptext,';')
+    }
+  }
+  
+  begin = 'There was no significant'
+  if(p <0.09){
+    begin = "There was a marginal"
+  }
+  if(p < 0.05){
+    begin = 'There was a significant'  
+  }
+  
+  
+  return(paste(begin,ef,"(",wald.text,"log likelihood difference =",
+               loglikDiff,", df = ",df,", Chi Squared =", chi,", p = ",p,")."))
+}
+```
+
+```{r echo=F, eval=F}
+setwd("~/Documents/Bristol/Codability/LoP_Codability/analyses/")
+```
+
+# Load data
+
+```{r}
+d = read.csv("../data/DiversityIndices_ND.csv", stringsAsFactors = F)
+
+d = d[!is.na(d$simpson.diversityIndex),]
+
+d$Language= as.factor(d$Language)
+d$domain = factor(d$domain, levels=c("colour",'shape','sound','touch','taste','smell'))
+```
+
+Get log of diversity index, (add 0.1 to avoid infinite values)
+
+```{r}
+d$logDiversity = log(d$simpson.diversityIndex+0.1)
+```
+
+Distribution is not very normal, but it's difficult to approximate this distribution anyway.
+
+```{r}
+hist(d$logDiversity)
+```
+
+# Plot data
+
+```{r}
+g = ggplot(d, aes(y=simpson.diversityIndex, x=domain))
+g + geom_boxplot()
+g + geom_violin()
+```
+
+```{r}
+g = ggplot(d, aes(y=shannon.diversityIndex, x=domain))
+g + geom_boxplot()
+g + geom_violin()
+```
+
+
+# Run models
+
+
+```{r}
+m.full = lmer( logDiversity ~ 1 + 
+              (1|Language) + 
+              (1|domain/Stimulus.code) +
+              (1|Language:domain), 
+            data=d)
+
+m.noL = lmer( logDiversity ~ 1 + 
+              (1|domain/Stimulus.code) +
+              (1|Language:domain), 
+            data=d)
+
+m.noDom = lmer( logDiversity ~ 1 + 
+              (1|Language) + 
+              (1|Stimulus.code) +
+              (1|Language:domain), 
+            data=d)
+
+m.noStim = lmer( logDiversity ~ 1 + 
+              (1|Language) + 
+              (1|domain) +
+              (1|Language:domain), 
+            data=d)
+
+m.noLxD = lmer( logDiversity ~ 1 + 
+              (1|Language) + 
+              (1|domain/Stimulus.code), 
+            data=d)
+
+
+
+```          
+
+Test models:
+
+```{r}
+
+anova(m.full, m.noL)
+
+anova(m.full, m.noDom)
+
+anova(m.full, m.noStim)
+
+anova(m.full, m.noLxD)
+```
+
+Details:
+
+```{r}
+summary(m.full)
+```
+
+Random effects:
+
+```{r}
+sjp.lmer(m.full, 're', sort.est = T, geom.colors=c(1,1))
+```
+
+```{r}
+plot(predict(m.full), d$simpson.diversityIndex)
+```
+
+\newpage
+
+## Summary
+
+The influence of each of the following random effects was tested:
+
+-  Language
+-  Domain
+-  Stimulus item (nested within domains)
+-  Domains within languages (interaction)
+
+The influence of each was tested by comparing a full model with all random effects to one where the given random effect was removed.
+
+`r getMEText(anova(m.full, m.noL), "random effect for language")`
+`r getMEText(anova(m.full, m.noDom), "random effect for domain")`
+`r getMEText(anova(m.full, m.noStim), "random effect for stimulus item (within domain)")`
+`r getMEText(anova(m.full, m.noLxD), "random effect for the interaction between language and domain")`
+
+\newpage
+
+# Distribution assumpsions
+
+The fit of the model distributions is reasonable:
+
+```{r}
+par(mfrow=c(1,2))
+hist(predict(m.full), main="Model predicitons")
+hist(d$logDiversity, main="Actual data")
+```
+
+We can try fitting the data with different distributions (Gamma, inverse gaussian):
+
+```{r eval=F, echo=F}
+
+m4.gaussian <- lmer( 
+  I(logDiversity+3) ~ 1 + 
+              (1|Language) + 
+              (1|domain/Stimulus.code) +
+              (1|Language:domain),
+                   data=d)
+
+m4.inverseGaussian <- glmer( 
+  I(logDiversity+3) ~ 1 + 
+              (1|Language) + 
+              (1|domain/Stimulus.code) +
+              (1|Language:domain), 
+                   family =inverse.gaussian(link=log),
+                   data=d)
+
+m4.gamma <- glmer( 
+  I(logDiversity+3) ~ 1 + 
+              (1|Language) + 
+              (1|domain/Stimulus.code) +
+              (1|Language:domain), 
+                  family =Gamma(log),
+                  data=d)
+
+anova(m4.gaussian,m4.gamma,m4.inverseGaussian)
+```
+
+The gaussian model is the best fit by AIC.
+
+\newpage
+
+# Differences between domains
+
+How do the different domains cluster according to codability?  We can use REEMtree which allows random effects for Language and Stimulus:
+
+```{r}
+REEMresult<-REEMtree(simpson.diversityIndex~ domain, 
+                     data=d, 
+                     random= list(~ 1|Language,~1|Stimulus.code),
+                     MaxIterations = 100000)
+rpart.plot(tree(REEMresult), type=3)
+rtrf.lang = REEMresult$RandomEffects$Language
+rtrf.lang.intercept = rtrf.lang[,1]
+names(rtrf.lang.intercept) = rownames(rtrf.lang)
+dotplot(sort(rtrf.lang.intercept))
+```
+
+According to the decision tree results, the hierarchy of codability is:
+
+[Colour, Taste] > [Shape, Sound, Touch] >  Smell
+
+\newpage
+
+# Differences between langauges
+
+We can also ask which languages cluster together:
+
+```{r}
+d$L = substr(d$Language,1,3)
+REEMresult.lang<-REEMtree(simpson.diversityIndex~ L, 
+                     data=d, 
+                     random= c(~ 1|domain,~1|Stimulus.code),
+                     MaxIterations = 100000)
+rpart.plot(tree(REEMresult.lang), type=4, extra=100,
+           box.palette="RdYlGn")
+rtrf.dom = REEMresult.lang$RandomEffects$domain
+rtrf.dom.intercept = rtrf.dom[,1]
+names(rtrf.dom.intercept) = rownames(rtrf.dom)
+dotplot(sort(rtrf.dom.intercept))
+```
+
+
+Here's a decision tree splitting the data by domain and language.  It is harder to understand the splits here, which is to say that it is not easy to make a generalisation about the differences.  The main point is that there are many interactions between langauge and domain, not just one big difference.
+
+```{r}
+REEMresult.both<-REEMtree(simpson.diversityIndex~ L+domain, 
+                     data=d, 
+                     random= ~ 1|Stimulus.code,
+                     MaxIterations = 100000)
+rpart.plot(tree(REEMresult.both), type=4, extra=100,
+           box.palette="RdYlGn")
+pdf("../results/graphs/DecisionTree_LanguagesAndDomains.pdf",
+    width=15, height=10)
+rpart.plot(tree(REEMresult.both), type=4, extra=100,
+           box.palette="RdYlGn")
+dev.off()
+
+tree(REEMresult.both)$variable.importance
+```
+
+
+We were also interested in whether languages differ by modality:
+
+```{r cache=T}
+d$L = substr(d$Language,1,3)
+d$modality = "Spoken"
+d$modality[d$Language %in% c("ASL", "BSL", "Kata Kolok")] = "Signed"
+REEMresult.mod<-REEMtree(simpson.diversityIndex~ L + domain + modality, 
+                     data=d, 
+                     random= c(~1|Stimulus.code),
+                     MaxIterations = 100000)
+tree(REEMresult.mod)$variable.importance
+```
+
+Modality is not used in the tree (not shown), and is not used if it is the only variable in available to the tree (not shown).  The importance measure for modality is 20 times lower than for language and domain.  That is, languages do not cluster by modality.
+
+
+\newpage
+
+# Description types and codability
+
+Is there better codability for more abstract terms?
+
+```{r}
+sae = read.csv("../data/AllData_LoP.csv", stringsAsFactors = F)
+sae = sae[!is.na(sae$head),]
+sae = sae[!sae$head %in% c("n/a","no description"),]
+sae = sae[!is.na(sae$SAE),]
+sae = sae[sae$Response==1,]
+prop.sae = sae %>% group_by(Language,domain,SAE) %>%
+  summarise (n = n()) %>%
+  mutate(prop = n / sum(n))
+
+d$Abstract = NA
+# Match up each diversity measure with the proportion of
+#  abstract terms used
+for(lang in unique(d$Language)){
+  for(dom in unique(d$domain)){
+    propx = prop.sae[prop.sae$Language==lang & prop.sae$domain==dom & prop.sae$SAE=="A",]$prop
+    if(length(propx)==0){
+      propx = 0
+    }
+    sel = d$Language==lang & d$domain==dom
+    if(sum(sel)!=0){
+      d[sel,]$Abstract = propx
+    }
+  }
+}
+d$Abstract.scaled = scale(d$Abstract^2)
+abs.scale = attr(d$Abstract.scaled,"scaled:scale")
+abs.center = attr(d$Abstract.scaled,"scaled:center")
+d$Abstract.scaled = as.numeric(d$Abstract.scaled)
+```
+
+Plot raw data:
+
+```{r}
+rawgx  = ggplot(d, aes(Abstract, simpson.diversityIndex)) +
+  geom_point(alpha=0.2) +
+  stat_smooth(method = 'gam') +
+  xlab("Proportion of abstract terms") +
+  ylab("Codability")
+pdf("../results/graphs/Codability_by_AbstractUse_Raw.pdf", width=4, height=4)
+rawgx
+dev.off()
+```
+
+Raw correlation:
+
+```{r}
+cor(d$Abstract,d$simpson.diversityIndex)
+```
+
+
+Compare models with and without the main effect of abstract types.
+
+```{r}
+m0.sae = lmer( logDiversity ~ 1 + 
+              (1+Abstract.scaled|Language) + 
+              (1+Abstract.scaled|domain/Stimulus.code) +
+              (1|Language:domain), 
+            data=d)
+
+m1.sae = update(m0.sae, ~.+Abstract.scaled)
+anova(m0.sae,m1.sae)
+```
+
+```{r warning=F}
+px = sjp.lmer(m1.sae,'eff','Abstract.scaled', show.ci = T, prnt.plot = F)
+px$plot$data$x = sqrt((px$plot$data$x  * abs.scale + abs.center))
+px$plot$data$y = exp(px$plot$data$y) -0.1
+px$plot$data$upper = exp(px$plot$data$upper) -0.1
+px$plot$data$lower = exp(px$plot$data$lower) -0.1
+px = px$plot+ xlab("Proportion of abstract terms") +
+  ylab("Codability") +
+  theme(strip.background = element_blank(),
+        strip.text.y = element_blank(),
+        plot.title = element_blank())
+pdf("../results/graphs/Codability_by_AbstractUse.pdf", width=4, height=4)
+px
+dev.off()
+save(px,file="../results/graphs/Codability_by_AbstractUse_ggplot.RDat")
+```
+
+
+
+\newpage
+
+## Permutation test
+
+
+We can use a permutation test to test pairs of domains against each other.  We test whether the difference in mean diversity between each pair of domains is greater than would be expected by chance.  For each possible pairing of domains, calculate the difference in means for codability.  Then randomly swap observations between the two doamins (permutation) and calculate the mean again.  The difference in the two means is an indication of the extent of the difference between domains.  Arguably, the decision tree in the seciton above is a better way of doing this, because it takes into account random effects for language and stimulus.  However, the permutation test makes fewer assumptions about the shape of the distribution.
+
+```{r}
+# The distribution of the variable is not important 
+#  in permutaiton, so we just use the raw index:
+d$diversity = d$simpson.diversityIndex
+
+permuteX = function(d,fact,p){
+  pDiff = tapply(d[d[,fact] %in% p,]$diversity,
+                    sample(d[d[,fact] %in% p,fact]),
+                    mean)
+  pDiff = abs(diff(pDiff[!is.na(pDiff)]))
+  return(pDiff)
+}
+
+compareWithPermutation = function(d,fact, numPerms = 1000){
+  pairs = combn(unique(as.character(d[,fact])),2)
+  set.seed(2387)
+  permTests = apply(pairs,2, function(p){
+    trueDiff = tapply(d[d[,fact] %in% p,]$diversity,
+                      d[d[,fact] %in% p,fact],
+                      mean)
+    trueDiff = abs(diff(trueDiff[!is.na(trueDiff)]))
+    permDiff = replicate(numPerms,permuteX(d,fact,p))
+    z = (trueDiff -mean(permDiff))/sd(permDiff)
+    p = sum(permDiff >= trueDiff)/length(permDiff)
+    if(p==0){
+      p = 1/length(permDiff)
+    }
+    return(c(z,p))
+  })
+  
+  res = data.frame(
+    pair = apply(pairs,2,paste,collapse=','),
+    perm.z = permTests[1,],
+    perm.p = permTests[2,],
+    perm.p.adjusted =
+      p.adjust(permTests[2,],'bonferroni'))
+  
+  res
+}
+
+compareWithPermutation(d,'domain')
+
+```
+
+The mean codability for all paris of domains are different, except for:
+
+-  Colour and Taste
+-  Touch and Sound
+
+So, the hierarchy is:
+
+[Colour, Taste] > Shape > [Sound, Touch] > Smell
+
+Which matches the decision tree hierarchy very well.
+
+### Permutation between languages
+
+Test whether the mean diversity differs between each pair of languages.  This is just to double-check that the results from the mixed effects model above are not artefacts of the shape of the codability distribution.  A large number of permutations is needed so that the p-value remains significant when controlling for multiple comparisons.
+
+```{r cache=T}
+
+d$Language2 = factor(d$Language,
+                     levels = 
+                       names(sort(
+                         tapply(d$simpson.diversityIndex,
+                              d$Language,
+                              mean))))
+
+ggplot(d, aes(y=diversity,x=Language2)) +
+  geom_boxplot() + coord_flip()
+
+# (need 20000 permutations for Bonferroni correction)
+langPerm = compareWithPermutation(d,'Language', numPerms = 20000)
+```
+
+List of significant differences:
+
+```{r}
+langPerm[langPerm$perm.p.adjusted<0.01,]
+```
+
+Languages really are different, but some languages are closer than others.  This heatmap gives an idea of which languages are similar to which.
+
+```{r}
+d$Language2 = factor(d$Language, levels = 
+              names(sort(tapply(
+                d$diversity,
+                d$Language,
+                mean)))) 
+
+langPerm$l1 = sapply(as.character(langPerm$pair), function(X){strsplit(X,',')[[1]][1]})
+langPerm$l2 = sapply(as.character(langPerm$pair), function(X){strsplit(X,',')[[1]][2]})
+
+lxs = unique(d$Language)
+langPerm2 = langPerm
+langPerm2 = rbind(
+  langPerm,
+  data.frame(
+    pair = paste(lxs,lxs,sep=','),
+    perm.z = 0,
+    perm.p = 1,
+    perm.p.adjusted = 1,
+    l1 = lxs,
+    l2 = lxs
+  )
+)
+
+langPerm2$perm.z = abs(langPerm2$perm.z)
+
+langPermDist = acast(langPerm2, l1~l2, value.var="perm.z")
+
+langPermDist[lower.tri(langPermDist)] = t(langPermDist)[lower.tri(langPermDist)]
+
+heatmap(langPermDist)
+
+```
+
+
+# Stimulus set size
+
+A check that the size of the stimulus set does not predict the codability:
+
+```{r}
+numStimuli = tapply(d$Stimulus.code,d$domain, function(X){length(unique(X))})
+
+d$numStimuli = numStimuli[d$domain]
+
+m.full = lmer( logDiversity ~ 1 + 
+                 (1|Language) + 
+                 (1|domain/Stimulus.code) +
+                 (1|Language:domain), 
+               data=d)
+
+m.ns = lmer( logDiversity ~ 1 + 
+               numStimuli +
+                 (1|Language) + 
+                 (1|domain/Stimulus.code) +
+                 (1|Language:domain), 
+               data=d)
+
+anova(m.full, m.ns)
+```
+
+No significant prediction.  This is easy to see: Taste and Colour have roughly equal mean codability, but colour has the largest number of stimuli (80) and taste has the least (5). 
+
+
+# Description lengths
+
+Load the data.  The column `mean` is the mean length, and `mean.log` is the mean of the log of the lengths.
+
+```{r}
+len = read.csv("../data/DiversityIndices_ND_withLengths.csv",
+               stringsAsFactors = F)
+len = len[complete.cases(len),]
+
+# Remove 2 outliers that had very few responses:
+len = len[len$mean>=1,]
+
+len$logDiversity = log(len$simpson.diversityIndex+0.1)
+len$logDiversity.scaled = scale(len$logDiversity)
+len$length.scaled = scale(len$mean.log)
+len$Stimulus.code = factor(len$Stimulus.code)
+len$Language = factor(len$Language)
+len$domain = factor(len$domain)
+
+hist(len$length.scaled)
+```
+
+Raw correlation:
+
+```{r}
+cor(len$mean.log, len$simpson.diversityIndex)
+```
+
+
+Linear model with random intercepts and slopes by language, domain and the interaction between language and domain:
+
+```{r}
+mLenl0 = lmer( logDiversity.scaled ~ 1 + 
+                 (1+length.scaled|Language) + 
+                 (1+length.scaled|domain/Stimulus.code) +
+                 (1+length.scaled|Language:domain), 
+               data=len)
+mLenl1 = update(mLenl0, ~.+length.scaled)
+mLenl2 = update(mLenl1, ~.+I(length.scaled^2))
+anova(mLenl0,mLenl1,mLenl2)
+```
+
+There is a significant effect, but no quadratic effect.  Since extremely short responses are unlikely to be informative, we wondered if there were higher-level non-linear effects.  We ran the same model as above, but as a generalised additive model (GAM):
+
+```{r cache=T}
+library(mgcv)
+library(itsadug)
+library(lmtest)
+mLen = bam(logDiversity.scaled ~
+      s(length.scaled) + 
+      s(Language,bs='re')+
+      s(domain,bs='re')+
+      s(Stimulus.code,bs='re')+
+      s(Language,domain,bs='re'), # interaction
+    data = len)
+```
+
+Test for need for random slopes:
+
+```{r}
+mLen2 = update(mLen, ~.+s(Language,length.scaled,bs='re'))
+lrtest(mLen,mLen2)
+mLen3 = update(mLen2, ~.+s(domain,length.scaled,bs='re'))
+lrtest(mLen2,mLen3)
+mLen4 = update(mLen3, ~.+s(Stimulus.code,length.scaled,bs='re'))
+lrtest(mLen3,mLen4)
+mLen5 = update(mLen4, ~.+s(Language,domain,length.scaled,bs='re'))
+lrtest(mLen4,mLen5)
+```
+
+All random slopes improve the model.  Final model:
+
+```{r}
+summary(mLen5)
+```
+
+Note that there are significant random slopes for length by Language x domain and by Language, indicating that the stength of the length effect differes across cultures.
+
+We can plot the model smooths.  
+
+```{r}
+plot(mLen5)
+```
+
+Look at the variation between domains (random slopes).  These show the difference in how sensitive domains are to length.  For example, the effect of length is less pronounced for smell and more pronounced for touch (though this differs between languages).
+
+```{r}
+mDom = mLen5$coefficients
+mDom = mDom[grepl("s\\(domain,length.scaled\\)",names(mDom))]
+names(mDom) = as.character(levels(len$domain))
+t(t(sort(mDom)))
+```
+
+And between languages:
+
+```{r}
+mLang = mLen5$coefficients
+mLang = mLang[grepl("s\\(Language,length.scaled\\)",names(mLang))]
+names(mLang) = as.character(levels(len$Language))
+t(t(sort(mLang)))
+```
+
+
+
+We can also use the `itsadug` library to plot the effect of length independent of the random effects.  This also scales everything back into the original units, but cuts the length range to show 90% of the data (to hide the long tail)
+
+```{r}
+
+convertLogDiversity = function(X){
+  # Convert the scaled diversity measure 
+  #  back to the original units
+  exp(X * attr(len$logDiversity.scaled,"scaled:scale") +
+        attr(len$logDiversity.scaled,"scaled:center"))-0.1
+}
+
+px = plot_smooth(mLen5,view="length.scaled", rm.ranef = T, print.summary=F)
+px$fv$fit = convertLogDiversity(px$fv$fit)
+px$fv$ul = convertLogDiversity(px$fv$ul)
+px$fv$ll = convertLogDiversity(px$fv$ll)
+px$fv$length.scaled = exp(px$fv$length.scaled *
+                            attr(len$length.scaled,"scaled:scale") +
+                            attr(len$length.scaled,"scaled:center"))-0.5
+
+gLen = ggplot(px$fv, aes(x=length.scaled,y=fit)) + 
+  geom_ribbon(aes(ymin=ll,ymax=ul), alpha=0.3) +
+  geom_line(size=1) +
+  ylab("Codability") +
+  xlab("Mean length of response") +
+  coord_cartesian(xlim=c(0,quantile(len$mean, 0.90)))
+gLen
+pdf("../results/graphs/Codability_by_Length.pdf",
+    width = 4, height = 4)
+gLen
+dev.off()
+```
+
