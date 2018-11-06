@@ -1,4 +1,8 @@
-#  Analyses of the Language of Perception project data
+#  Data for Differential coding of perception in the world’s languages
+
+Majid et al. (2018) Differential coding of perception in the world’s languages, Proceedings of the National Academy of Sciences of the United States of America. See the [article online](http://www.pnas.org/content/early/2018/10/30/1720419115)
+
+Authors: Asifa Majid, Seán G. Roberts, Ludy Cilissen, Karen Emmorey, Brenda Nicodemus, Lucinda O’Grady, Bencie Woll, Barbara LeLan, Hilário de Sousa, Brian L. Cansler, Shakila Shayan, Connie de Vos, Gunter Senft, N. J. Enfield, Rogayah A. Razak, Sebastian Fedden, Sylvia Tufvesson, Mark Dingemanse, Ozge Ozturk, Penelope Brown, Clair Hill, Olivier Le Guen, Vincent Hirtzel, Rik van Gijn, Mark A. Sicoli, and Stephen C. Levinson.
 
 The folders are organised as follows:
 
