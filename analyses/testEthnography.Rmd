@@ -935,6 +935,66 @@ There are no specific taste effects.
 
 \newpage
 
+In the original paper we did not include a few questions in our ethnography:
+
+-  Ideology of cuisine
+-  Whether quantity or quality is more important (or both)
+-  Specialist chefs
+
+There was a question on 'cooking from scratch', but there was no variation in our sample.  We include the three variables above:
+
+```{r}
+rt.tastePostPub = 
+  REEMtree(simpson.diversityIndex~
+         pulverise.spices+
+         spices.herbs+
+         num.additives.scaled +
+         fragrant.food + 
+           quantity.quality +
+           ideology.of.cuisine +
+           chefs.cooks,
+         random = ~1|Language,
+         data = s.taste,
+         MaxIterations=100000)
+rpart.plot(tree(rt.tastePostPub), 
+           type=4,extra=100, branch.lty=1, box.palette="RdYlGn", main="Taste")
+cor(predict.REEMtree(rt.tastePostPub,s.taste,id=s.taste$Language,
+                     EstimateRandomEffects = T),
+    s.taste$simpson.diversityIndex)^2
+```
+
+The decision tree divides cultures that prioritise "quantity" or "both" from those that prioritise only "quality".
+
+Test the effect of quality/quantity in a mixed effects model:
+
+```{r}
+s.taste$PrioritiseFood =
+  c("Quantity/Both","Quality")[1+as.numeric(s.taste$quantity.quality=="quality")]
+mT.null = lmer(simpson.diversityIndex.log ~
+       1 + 
+        (1 | Language) +
+        (1 | Stimulus.code),
+     data = s.taste)
+mT.Quality = update(mT.null,~.+PrioritiseFood)
+anova(mT.null, mT.Quality)
+tapply(s.taste$simpson.diversityIndex,s.taste$PrioritiseFood,mean)
+tQual = ggplot(s.taste,aes(x=PrioritiseFood,y=simpson.diversityIndex)) +
+  geom_violin() + xlab("Priorities for food") + 
+  ylab("Simpson's diversity index")
+tQual
+```
+
+```{r echo=F}
+pdf("../results/graphs/FoodQualityQuantity.pdf")
+tQual
+dev.off()
+```
+
+
+Statistical summary: `r getMEText(anova(mT.null, mT.Quality), "main effect of prioritising quality only")`
+
+\newpage
+
 # Smell
 
 ```{r}
